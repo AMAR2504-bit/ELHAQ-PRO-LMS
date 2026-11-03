@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Profil pengguna. Pendaftar hanya boleh membuat akun dengan peran "siswa".
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'siswa'
+        && request.resource.data.keys().hasOnly(['name', 'email', 'role', 'createdAt']);
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
+      allow update, delete: if isAdmin();
+    }
+
+    // Konten belajar: dibaca semua pengguna masuk, ditulis admin.
+    match /materials/{id}   { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /assignments/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /quizzes/{id}     { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // Kunci jawaban kuis: hanya admin (siswa tidak bisa melihatnya).
+    match /quizKeys/{id}    { allow read, write: if isAdmin(); }
+
+    // Pengumpulan tugas: satu dokumen per siswa per tugas, penilaian hanya admin.
+    match /submissions/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'submitted'
+        && !('score' in request.resource.data)
+        && id == request.auth.uid + '_' + request.resource.data.assignmentId;
+      allow update, delete: if isAdmin();
+    }
+
+    // Jawaban kuis: satu kali per siswa per kuis, penilaian hanya admin.
+    match /attempts/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'submitted'
+        && !('score' in request.resource.data)
+        && id == request.auth.uid + '_' + request.resource.data.quizId;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
